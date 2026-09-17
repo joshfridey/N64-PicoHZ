@@ -5,53 +5,196 @@
 //   _| |_\   |_ | (____) |    _| |_   _| |_    | | | \__. | \__. |_| |  | |_  _/ /__/ | 
 //  |_____|\____|'.______.'   |_____| |_____|  [___]'.___.' '.__.'|____||____||________| 
 
+#include "AudioPlayer.h"
+#include "SoundStorage.h"
 
-#define RST_IN 26
-#define CPU_112 2
-#define CPU_116 3
-#define LED_15 4 //CLK 1.5X
-#define LED_20 5 //CLK 2.0x
-int clockstate = 0; //variable for clock state
-int RST_SW = 100;
+// ============================================================
+// PIN DEFINITIONS
+// ============================================================
+
+constexpr uint8_t RST_IN = 26;
+
+constexpr uint8_t CPU_112 = 2;
+constexpr uint8_t CPU_116 = 3;
+
+constexpr uint8_t LED_15 = 4;
+constexpr uint8_t LED_20 = 5;
+
+// ============================================================
+// CLOCK / RESET CONFIGURATION
+// ============================================================
+
+constexpr unsigned long RESET_HOLD_MS = 800;
+constexpr unsigned long CLOCK_SETTLE_US = 7000;
+
+// ============================================================
+// GLOBALS
+// ============================================================
+
+bool clockstate = false; // false = 1.5X, true = 2.0X
+
+// ============================================================
+// SETUP
+// ============================================================
 
 void setup()
-  {
+{
+  Serial.begin(115200);
+
+  // ----------------------------------------------------------
+  // N64 RESET INPUT
+  // ----------------------------------------------------------
+
   pinMode(RST_IN, INPUT);
+
+  // ----------------------------------------------------------
+  // CLOCK OUTPUTS
+  // ----------------------------------------------------------
+
   pinMode(CPU_112, OUTPUT);
   pinMode(CPU_116, OUTPUT);
+
+  // ----------------------------------------------------------
+  // LED OUTPUTS
+  // ----------------------------------------------------------
+
   pinMode(LED_15, OUTPUT);
   pinMode(LED_20, OUTPUT);
 
-  //set stock clock for boot.
+  // ----------------------------------------------------------
+  // DEFAULT 1.5X CLOCK
+  // ----------------------------------------------------------
+
   digitalWrite(CPU_112, HIGH);
   digitalWrite(CPU_116, LOW);
+
+  // ----------------------------------------------------------
+  // DEFAULT 1.5X LED
+  // ----------------------------------------------------------
+
   digitalWrite(LED_15, HIGH);
-  }
+  digitalWrite(LED_20, LOW);
+
+  // ----------------------------------------------------------
+  // AUDIO SETUP
+  // ----------------------------------------------------------
+
+  setupAudio();
+
+  // ----------------------------------------------------------
+  // STARTUP SOUND
+  // ----------------------------------------------------------
+
+  playWav(STARTUP_WAV);
+}
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
 
 void loop()
-  {RST_SW = analogRead(RST_IN);
-  if (RST_SW <= 50)
-      {
-      delay(800); //wait to check if RST held or pressed
-      RST_SW = analogRead(RST_IN);
-      if (RST_SW <= 50) //RST held, change clock
-        {
-        if (clockstate == 0) //set multiplier 2.0x
-          {
-          clockstate = 1;
-          digitalWrite(CPU_112, LOW);
-          digitalWrite(CPU_116, HIGH);
-          digitalWrite(LED_15, LOW);
-          digitalWrite(LED_20, HIGH);
-          }
-        else //set multiplier 1.5x
-          {
-          clockstate = 0;
-          digitalWrite(CPU_116, LOW);
-          digitalWrite(CPU_112, HIGH);
-          digitalWrite(LED_15, HIGH);
-          digitalWrite(LED_20, LOW);
-          }
-        }
-      }
+{
+  // ==========================================================
+  // SOUND UPDATE MODE
+  // ==========================================================
+
+  if (updateMode)
+  {
+    delay(100);
+    return;
   }
+
+  // ==========================================================
+  // BOOT BUTTON
+  // ==========================================================
+
+  if (BOOTSEL)
+  {
+    Serial.println("BOOT pressed.");
+
+    while (BOOTSEL)
+    {
+      delay(10);
+    }
+
+    startSoundUpdateMode();
+
+    return;
+  }
+
+  // ==========================================================
+  // NORMAL N64 MODE
+  // ==========================================================
+
+  if (digitalRead(RST_IN) == LOW)
+  {
+    // --------------------------------------------------------
+    // RESET PRESSED
+    // --------------------------------------------------------
+
+    delay(RESET_HOLD_MS);
+
+    // --------------------------------------------------------
+    // RESET STILL HELD AFTER 800MS
+    // --------------------------------------------------------
+
+    if (digitalRead(RST_IN) == LOW)
+    {
+      // Toggle once per hold
+      clockstate = !clockstate;
+
+      // ======================================================
+      // UPDATE LED
+      // ======================================================
+
+      if (clockstate)
+      {
+        digitalWrite(LED_15, LOW);
+        digitalWrite(LED_20, HIGH);
+      }
+      else
+      {
+        digitalWrite(LED_15, HIGH);
+        digitalWrite(LED_20, LOW);
+      }
+
+      // ======================================================
+      // WAIT FOR RESET RELEASE
+      // ======================================================
+
+      while (digitalRead(RST_IN) == LOW)
+      {
+      }
+
+      // ======================================================
+      // CLOCK SETTLING DELAY
+      // ======================================================
+
+      delayMicroseconds(CLOCK_SETTLE_US);
+
+      // ======================================================
+      // APPLY CPU CLOCK
+      // ======================================================
+
+      if (clockstate)
+      {
+        // 2.0X
+
+        digitalWrite(CPU_112, LOW);
+        digitalWrite(CPU_116, HIGH);
+
+        playWav(CLOCK20_WAV);
+      }
+
+      else
+      {
+        // 1.5X
+
+        digitalWrite(CPU_116, LOW);
+        digitalWrite(CPU_112, HIGH);
+
+        playWav(CLOCK15_WAV);
+      }
+    }
+  }
+}
